@@ -3,7 +3,7 @@
 
 ## Build Status
 
-6.x : [![6.x Build Status](https://travis-ci.org/martial69320/WoD.svg?branch=master)](https://travis-ci.org/martial69320/WoD) 
+6.x : [![Build Status](https://travis-ci.org/martial69320/WoD.svg?branch=master)](https://travis-ci.org/martial69320/WoD)
 
 ## Introduction
 
