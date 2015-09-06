@@ -53,6 +53,7 @@ struct AuctionEntry;
 struct DeclinedName;
 struct ItemTemplate;
 struct MovementInfo;
+class Loot;
 
 namespace lfg
 {
@@ -952,7 +953,7 @@ class WorldSession
         void SendNotInArenaTeamPacket(uint8 type);
         void SendPetitionShowList(ObjectGuid guid);
 
-        void DoLootRelease(ObjectGuid lguid);
+        void DoLootRelease(Loot* loot);
 
         // Account mute time
         time_t m_muteTime;

@@ -503,7 +503,7 @@ public:
 
         handler->PSendSysMessage("Loot recipient for creature %s (%s, DB GUID " UI64FMTD ") is %s",
             target->GetName().c_str(), target->GetGUID().ToString().c_str(), target->GetSpawnId(),
-            target->hasLootRecipient() ? (target->GetLootRecipient() ? target->GetLootRecipient()->GetName().c_str() : "offline") : "no loot recipient");
+            target->loot ? (target->loot->GetRecipient() ? target->loot->GetRecipient()->GetName().c_str() : "offline") : "no loot recipient");
         return true;
     }
 

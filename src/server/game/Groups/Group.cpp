@@ -935,7 +935,7 @@ void Group::SendLooter(Creature* creature, Player* groupLooter)
 
     lootList.Owner = creature->GetGUID();
 
-    if (GetLootMethod() == MASTER_LOOT && creature->loot.hasOverThresholdItem())
+    if (GetLootMethod() == MASTER_LOOT && creature->loot->HasOverThresholdItem())
         lootList.Master = GetMasterLooterGuid();
 
     if (groupLooter)
@@ -950,7 +950,7 @@ void Group::GroupLoot(Loot* loot, WorldObject* pLootedObject)
     ItemTemplate const* item;
     uint8 itemSlot = 0;
 
-    for (i = loot->items.begin(); i != loot->items.end(); ++i, ++itemSlot)
+    for (i = loot->Items.begin(); i != loot->Items.end(); ++i, ++itemSlot)
     {
         if (i->freeforall)
             continue;
@@ -999,7 +999,7 @@ void Group::GroupLoot(Loot* loot, WorldObject* pLootedObject)
                 if (item->DisenchantID && m_maxEnchantingLevel >= item->RequiredDisenchantSkill)
                     r->rollVoteMask |= ROLL_FLAG_TYPE_DISENCHANT;
 
-                loot->items[itemSlot].is_blocked = true;
+                loot->Items[itemSlot].is_blocked = true;
 
                 // If there is any "auto pass", broadcast the pass now.
                 if (r->totalPass)
@@ -1015,20 +1015,11 @@ void Group::GroupLoot(Loot* loot, WorldObject* pLootedObject)
                     }
                 }
 
-                SendLootStartRoll(60000, pLootedObject->GetMapId(), *r);
+                SendLootStartRoll(ROLL_TIME, pLootedObject->GetMapId(), *r);
 
                 RollId.push_back(r);
 
-                if (Creature* creature = pLootedObject->ToCreature())
-                {
-                    creature->m_groupLootTimer = 60000;
-                    creature->lootingGroupLowGUID = GetGUID();
-                }
-                else if (GameObject* go = pLootedObject->ToGameObject())
-                {
-                    go->m_groupLootTimer = 60000;
-                    go->lootingGroupLowGUID = GetGUID();
-                }
+                loot->StartRollTimer(ROLL_TIME);
             }
             else
                 delete r;
@@ -1037,7 +1028,7 @@ void Group::GroupLoot(Loot* loot, WorldObject* pLootedObject)
             i->is_underthreshold = true;
     }
 
-    for (i = loot->quest_items.begin(); i != loot->quest_items.end(); ++i, ++itemSlot)
+    for (i = loot->QuestItems.begin(); i != loot->QuestItems.end(); ++i, ++itemSlot)
     {
         if (!i->follow_loot_rules)
             continue;
@@ -1074,22 +1065,13 @@ void Group::GroupLoot(Loot* loot, WorldObject* pLootedObject)
             r->setLoot(loot);
             r->itemSlot = itemSlot;
 
-            loot->quest_items[itemSlot - loot->items.size()].is_blocked = true;
+            loot->QuestItems[itemSlot - loot->Items.size()].is_blocked = true;
 
-            SendLootStartRoll(60000, pLootedObject->GetMapId(), *r);
+            SendLootStartRoll(ROLL_TIME, pLootedObject->GetMapId(), *r);
 
             RollId.push_back(r);
 
-            if (Creature* creature = pLootedObject->ToCreature())
-            {
-                creature->m_groupLootTimer = 60000;
-                creature->lootingGroupLowGUID = GetGUID();
-            }
-            else if (GameObject* go = pLootedObject->ToGameObject())
-            {
-                go->m_groupLootTimer = 60000;
-                go->lootingGroupLowGUID = GetGUID();
-            }
+            loot->StartRollTimer(ROLL_TIME);
         }
         else
             delete r;
@@ -1100,7 +1082,7 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
 {
     ItemTemplate const* item;
     uint8 itemSlot = 0;
-    for (std::vector<LootItem>::iterator i = loot->items.begin(); i != loot->items.end(); ++i, ++itemSlot)
+    for (std::vector<LootItem>::iterator i = loot->Items.begin(); i != loot->Items.end(); ++i, ++itemSlot)
     {
         if (i->freeforall)
             continue;
@@ -1144,7 +1126,7 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
                 if (item->GetFlags2() & ITEM_FLAG2_NEED_ROLL_DISABLED)
                     r->rollVoteMask &= ~ROLL_FLAG_TYPE_NEED;
 
-                loot->items[itemSlot].is_blocked = true;
+                loot->Items[itemSlot].is_blocked = true;
 
                 //Broadcast Pass and Send Rollstart
                 for (Roll::PlayerVote::const_iterator itr = r->playerVote.begin(); itr != r->playerVote.end(); ++itr)
@@ -1156,21 +1138,12 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
                     if (itr->second == PASS)
                         SendLootRoll(newitemGUID, p->GetGUID(), 128, ROLL_PASS, *r);
                     else
-                        SendLootStartRollToPlayer(60000, lootedObject->GetMapId(), p, p->CanRollForItemInLFG(item, lootedObject) == EQUIP_ERR_OK, *r);
+                        SendLootStartRollToPlayer(ROLL_TIME, lootedObject->GetMapId(), p, p->CanRollForItemInLFG(item, lootedObject) == EQUIP_ERR_OK, *r);
                 }
 
                 RollId.push_back(r);
 
-                if (Creature* creature = lootedObject->ToCreature())
-                {
-                    creature->m_groupLootTimer = 60000;
-                    creature->lootingGroupLowGUID = GetGUID();
-                }
-                else if (GameObject* go = lootedObject->ToGameObject())
-                {
-                    go->m_groupLootTimer = 60000;
-                    go->lootingGroupLowGUID = GetGUID();
-                }
+                loot->StartRollTimer(ROLL_TIME);
             }
             else
                 delete r;
@@ -1179,7 +1152,7 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
             i->is_underthreshold = true;
     }
 
-    for (std::vector<LootItem>::iterator i = loot->quest_items.begin(); i != loot->quest_items.end(); ++i, ++itemSlot)
+    for (std::vector<LootItem>::iterator i = loot->QuestItems.begin(); i != loot->QuestItems.end(); ++i, ++itemSlot)
     {
         if (!i->follow_loot_rules)
             continue;
@@ -1207,7 +1180,7 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
             r->setLoot(loot);
             r->itemSlot = itemSlot;
 
-            loot->quest_items[itemSlot - loot->items.size()].is_blocked = true;
+            loot->QuestItems[itemSlot - loot->Items.size()].is_blocked = true;
 
             //Broadcast Pass and Send Rollstart
             for (Roll::PlayerVote::const_iterator itr = r->playerVote.begin(); itr != r->playerVote.end(); ++itr)
@@ -1219,21 +1192,12 @@ void Group::NeedBeforeGreed(Loot* loot, WorldObject* lootedObject)
                 if (itr->second == PASS)
                     SendLootRoll(newitemGUID, p->GetGUID(), 128, ROLL_PASS, *r);
                 else
-                    SendLootStartRollToPlayer(60000, lootedObject->GetMapId(), p, p->CanRollForItemInLFG(item, lootedObject) == EQUIP_ERR_OK, *r);
+                    SendLootStartRollToPlayer(ROLL_TIME, lootedObject->GetMapId(), p, p->CanRollForItemInLFG(item, lootedObject) == EQUIP_ERR_OK, *r);
             }
 
             RollId.push_back(r);
 
-            if (Creature* creature = lootedObject->ToCreature())
-            {
-                creature->m_groupLootTimer = 60000;
-                creature->lootingGroupLowGUID = GetGUID();
-            }
-            else if (GameObject* go = lootedObject->ToGameObject())
-            {
-                go->m_groupLootTimer = 60000;
-                go->lootingGroupLowGUID = GetGUID();
-            }
+            loot->StartRollTimer(ROLL_TIME);
         }
         else
             delete r;
@@ -1244,7 +1208,7 @@ void Group::MasterLoot(Loot* loot, WorldObject* pLootedObject)
 {
     TC_LOG_DEBUG("network", "Group::MasterLoot (SMSG_MASTER_LOOT_CANDIDATE_LIST)");
 
-    for (std::vector<LootItem>::iterator i = loot->items.begin(); i != loot->items.end(); ++i)
+    for (std::vector<LootItem>::iterator i = loot->Items.begin(); i != loot->Items.end(); ++i)
     {
         if (i->freeforall)
             continue;
@@ -1252,7 +1216,7 @@ void Group::MasterLoot(Loot* loot, WorldObject* pLootedObject)
         i->is_blocked = !i->is_underthreshold;
     }
 
-    for (std::vector<LootItem>::iterator i = loot->quest_items.begin(); i != loot->quest_items.end(); ++i)
+    for (std::vector<LootItem>::iterator i = loot->QuestItems.begin(); i != loot->QuestItems.end(); ++i)
     {
         if (!i->follow_loot_rules)
             continue;
@@ -1301,7 +1265,7 @@ void Group::CountRollVote(ObjectGuid playerGUID, ObjectGuid Guid, uint8 Choice)
         return;
 
     if (roll->getLoot())
-        if (roll->getLoot()->items.empty())
+        if (roll->getLoot()->Items.empty())
             return;
 
     switch (Choice)
@@ -1386,13 +1350,13 @@ void Group::CountTheRoll(Rolls::iterator rollI)
                 player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_NEED_ON_LOOT, roll->itemid, maxresul);
 
                 ItemPosCountVec dest;
-                LootItem* item = &(roll->itemSlot >= roll->getLoot()->items.size() ? roll->getLoot()->quest_items[roll->itemSlot - roll->getLoot()->items.size()] : roll->getLoot()->items[roll->itemSlot]);
+                LootItem* item = &(roll->itemSlot >= roll->getLoot()->Items.size() ? roll->getLoot()->QuestItems[roll->itemSlot - roll->getLoot()->Items.size()] : roll->getLoot()->Items[roll->itemSlot]);
                 InventoryResult msg = player->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, roll->itemid, item->count);
                 if (msg == EQUIP_ERR_OK)
                 {
                     item->is_looted = true;
                     roll->getLoot()->NotifyItemRemoved(roll->itemSlot);
-                    roll->getLoot()->unlootedCount--;
+                    roll->getLoot()->UnlootedCount--;
                     player->StoreNewItem(dest, roll->itemid, true, item->randomPropertyId, item->GetAllowedLooters(), item->BonusListIDs);
                 }
                 else
@@ -1434,7 +1398,7 @@ void Group::CountTheRoll(Rolls::iterator rollI)
             {
                 player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_ROLL_GREED_ON_LOOT, roll->itemid, maxresul);
 
-                LootItem* item = &(roll->itemSlot >= roll->getLoot()->items.size() ? roll->getLoot()->quest_items[roll->itemSlot - roll->getLoot()->items.size()] : roll->getLoot()->items[roll->itemSlot]);
+                LootItem* item = &(roll->itemSlot >= roll->getLoot()->Items.size() ? roll->getLoot()->QuestItems[roll->itemSlot - roll->getLoot()->Items.size()] : roll->getLoot()->Items[roll->itemSlot]);
 
                 if (rollvote == GREED)
                 {
@@ -1444,7 +1408,7 @@ void Group::CountTheRoll(Rolls::iterator rollI)
                     {
                         item->is_looted = true;
                         roll->getLoot()->NotifyItemRemoved(roll->itemSlot);
-                        roll->getLoot()->unlootedCount--;
+                        roll->getLoot()->UnlootedCount--;
                         player->StoreNewItem(dest, roll->itemid, true, item->randomPropertyId, item->GetAllowedLooters(), item->BonusListIDs);
                     }
                     else
@@ -1457,7 +1421,7 @@ void Group::CountTheRoll(Rolls::iterator rollI)
                 {
                     item->is_looted = true;
                     roll->getLoot()->NotifyItemRemoved(roll->itemSlot);
-                    roll->getLoot()->unlootedCount--;
+                    roll->getLoot()->UnlootedCount--;
                     ItemTemplate const* pProto = sObjectMgr->GetItemTemplate(roll->itemid);
                     player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_CAST_SPELL, 13262); // Disenchant
 
@@ -1467,7 +1431,7 @@ void Group::CountTheRoll(Rolls::iterator rollI)
                         player->AutoStoreLoot(pProto->DisenchantID, LootTemplates_Disenchant, true);
                     else // If the player's inventory is full, send the disenchant result in a mail.
                     {
-                        Loot loot;
+                        Loot loot(ObjectGuid::Empty);
                         loot.FillLoot(pProto->DisenchantID, LootTemplates_Disenchant, player, true);
 
                         uint32 max_slot = loot.GetMaxSlotInLootFor(player);
@@ -1487,7 +1451,7 @@ void Group::CountTheRoll(Rolls::iterator rollI)
         SendLootAllPassed(*roll);
 
         // remove is_blocked so that the item is lootable by all players
-        LootItem* item = &(roll->itemSlot >= roll->getLoot()->items.size() ? roll->getLoot()->quest_items[roll->itemSlot - roll->getLoot()->items.size()] : roll->getLoot()->items[roll->itemSlot]);
+        LootItem* item = &(roll->itemSlot >= roll->getLoot()->Items.size() ? roll->getLoot()->QuestItems[roll->itemSlot - roll->getLoot()->Items.size()] : roll->getLoot()->Items[roll->itemSlot]);
         if (item)
             item->is_blocked = false;
     }
@@ -1968,7 +1932,7 @@ GroupJoinBattlegroundResult Group::CanJoinBattlegroundQueue(Battleground const* 
 void Roll::targetObjectBuildLink()
 {
     // called from link()
-    getTarget()->addLootValidatorRef(this);
+    getTarget()->AddLootValidatorRef(this);
 }
 
 void Group::SetDungeonDifficultyID(Difficulty difficulty)

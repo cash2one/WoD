@@ -2865,7 +2865,7 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
     if (HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_NO_XP_GAIN))
         return;
 
-    if (victim && victim->GetTypeId() == TYPEID_UNIT && !victim->ToCreature()->hasLootRecipient())
+    if (victim && victim->GetTypeId() == TYPEID_UNIT && !victim->ToCreature()->IsTapped())
         return;
 
     uint8 level = getLevel();
@@ -8495,13 +8495,16 @@ void Player::RemovedInsignia(Player* looterPlr)
     if (!bones)
         return;
 
+	
+    // Loot already generated
+    if (bones->loot)
+        return;
+
+    bones->loot = Loot::CreateInsigniaLoot(this, looterPlr);
+
     // Now we must make bones lootable, and send player loot
     bones->SetFlag(CORPSE_FIELD_DYNAMIC_FLAGS, CORPSE_DYNFLAG_LOOTABLE);
 
-    // We store the level of our player in the gold field
-    // We retrieve this information at Player::SendLoot()
-    bones->loot.gold = getLevel();
-    bones->lootRecipient = looterPlr;
     looterPlr->SendLoot(bones->GetGUID(), LOOT_INSIGNIA);
 }
 
@@ -8513,17 +8516,13 @@ void Player::SendLootRelease(ObjectGuid guid)
     SendDirectMessage(packet.Write());
 }
 
-void Player::SendLoot(ObjectGuid guid, LootType loot_type)
+void Player::SendLoot(ObjectGuid guid, LootType type, bool aeLooting /* = false */)
 {
-    ObjectGuid currentLootGuid = GetLootGUID();
-    if (!currentLootGuid.IsEmpty())
-        m_session->DoLootRelease(currentLootGuid);
-
-    Loot* loot = 0;
-    PermissionTypes permission = ALL_PERMISSION;
+    Loot* loot = nullptr;
 
     TC_LOG_DEBUG("loot", "Player::SendLoot");
-    if (guid.IsGameObject())
+
+    /*if (guid.IsGameObject())
     {
         TC_LOG_DEBUG("loot", "IS_GAMEOBJECT_GUID(guid)");
         GameObject* go = GetMap()->GetGameObject(guid);
@@ -8536,7 +8535,7 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
             return;
         }
 
-        loot = &go->loot;
+        loot = go->Loot;
 
         if (go->getLootState() == GO_READY)
         {
@@ -8550,7 +8549,7 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
 
             if (lootid)
             {
-                loot->clear();
+                loot->Clear();
 
                 Group* group = GetGroup();
                 bool groupRules = (group && go->GetGOInfo()->type == GAMEOBJECT_TYPE_CHEST && go->GetGOInfo()->chest.usegrouplootrules);
@@ -8562,7 +8561,7 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
                 loot->FillLoot(lootid, LootTemplates_Gameobject, this, !groupRules, false, go->GetLootMode());
 
                 // get next RR player (for next loot)
-                if (groupRules && !go->loot.empty())
+                if (groupRules && !loot->Empty())
                     group->UpdateLooterGuid(go);
             }
 
@@ -8639,7 +8638,7 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
         if (!item->m_lootGenerated && !item->ItemContainerLoadLootFromDB())
         {
             item->m_lootGenerated = true;
-            loot->clear();
+            loot->Clear();
 
             switch (loot_type)
             {
@@ -8654,11 +8653,11 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
                     break;
                 default:
                     loot->generateMoneyLoot(item->GetTemplate()->MinMoneyLoot, item->GetTemplate()->MaxMoneyLoot);
-                    loot->FillLoot(item->GetEntry(), LootTemplates_Item, this, true, loot->gold != 0);
+                    loot->FillLoot(item->GetEntry(), LootTemplates_Item, this, true, loot->GetGold() != 0);
 
                     // Force save the loot and money items that were just rolled
                     //  Also saves the container item ID in Loot struct (not to DB)
-                    if (loot->gold > 0 || loot->unlootedCount > 0)
+                    if (!loot->IsLooted())
                         item->ItemContainerSaveLootToDB();
 
                     break;
@@ -8675,19 +8674,22 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
             return;
         }
 
-        loot = &bones->loot;
+        loot = bones->loot;
+
+        if (!loot)
+
 
         if (!bones->lootForBody)
         {
             bones->lootForBody = true;
-            uint32 pLevel = bones->loot.gold;
-            bones->loot.clear();
+            uint32 pLevel = bones->loot.GetGold();
+            loot->Clear();
             if (Battleground* bg = GetBattleground())
                 if (bg->GetTypeID(true) == BATTLEGROUND_AV)
                     loot->FillLoot(1, LootTemplates_Creature, this, true);
             // It may need a better formula
             // Now it works like this: lvl10: ~6copper, lvl70: ~9silver
-            bones->loot.gold = uint32(urand(50, 150) * 0.016f * std::pow(float(pLevel) / 5.76f, 2.5f) * sWorld->getRate(RATE_DROP_MONEY));
+            loot->SetGold(urand(50, 150) * 0.016f * std::pow(float(pLevel) / 5.76f, 2.5f) * sWorld->getRate(RATE_DROP_MONEY));
         }
 
         if (bones->lootRecipient != this)
@@ -8695,62 +8697,64 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
         else
             permission = OWNER_PERMISSION;
     }
-    else
+    else*/if (guid.IsCreature())
     {
         Creature* creature = GetMap()->GetCreature(guid);
 
         // must be in range and creature must be alive for pickpocket and must be dead for another loot
-        if (!creature || creature->IsAlive() != (loot_type == LOOT_PICKPOCKETING) || !creature->IsWithinDistInMap(this, INTERACTION_DISTANCE))
+        if (!creature || !creature->IsWithinDistInMap(this, INTERACTION_DISTANCE))
         {
             SendLootRelease(guid);
             return;
         }
 
-        if (loot_type == LOOT_PICKPOCKETING && IsFriendlyTo(creature))
-        {
-            SendLootRelease(guid);
-            return;
-        }
+        loot = creature->loot;
 
-        loot = &creature->loot;
+        // Change loot type if it's skinning re-loot
+        if (loot && loot->Type == LOOT_SKINNING)
+            type = LOOT_SKINNING;
 
-        if (loot_type == LOOT_PICKPOCKETING)
+        switch (type)
         {
-            if (loot->loot_type != LOOT_PICKPOCKETING)
+            case LOOT_PICKPOCKETING:
             {
-                if (creature->CanGeneratePickPocketLoot())
+                if (!creature->IsAlive() || IsFriendlyTo(creature))
                 {
-                    creature->StartPickPocketRefillTimer();
-                    loot->clear();
-
-                    if (uint32 lootid = creature->GetCreatureTemplate()->pickpocketLootId)
-                        loot->FillLoot(lootid, LootTemplates_Pickpocketing, this, true);
-
-                    // Generate extra money for pick pocket loot
-                    const uint32 a = urand(0, creature->getLevel() / 2);
-                    const uint32 b = urand(0, getLevel() / 2);
-                    loot->gold = uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY));
-                    permission = OWNER_PERMISSION;
-                }
-                else
-                {
-                    permission = NONE_PERMISSION;
-                    SendLootError(guid, LOOT_ERROR_ALREADY_PICKPOCKETED);
+                    SendLootRelease(guid);
                     return;
                 }
-            } // else - still has pickpocket loot generated & not fully taken
-        }
-        else
-        {
-            // the player whose group may loot the corpse
-            Player* recipient = creature->GetLootRecipient();
-            if (!recipient)
-                return;
 
-            if (loot->loot_type == LOOT_NONE)
+                    if (!loot)
+                {
+                    if (!creature->CanGeneratePickPocketLoot())
+                    {
+                        SendLootError(guid, LOOT_ERROR_ALREADY_PICKPOCKETED);
+                        return;
+                    }
+
+                    creature->loot = Loot::CreatePickPocketLoot(creature, this);
+                    loot = creature->loot;
+                }
+                break;
+            }
+            case LOOT_SKINNING:
             {
-                // for creature, loot is filled when creature is killed.
-                if (Group* group = recipient->GetGroup())
+                if (!loot)
+                {
+                    creature->loot = Loot::CreateSkinningLoot(creature, this);
+                    loot = creature->loot;
+                    return;
+                }
+            break;
+            }
+            // Normal looting
+            default:
+            {
+                // for creature, loot is filled when creature is killed in Unit::Kill but for safety check anyway
+                if (!loot)
+                    return;
+
+                if (Group* group = loot->GetRecipientGroup())
                 {
                     switch (group->GetLootMethod())
                     {
@@ -8768,66 +8772,39 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
                             break;
                     }
                 }
-            }
-
-            // if loot is already skinning loot then don't do anything else
-            if (loot->loot_type == LOOT_SKINNING)
-            {
-                loot_type = LOOT_SKINNING;
-                permission = creature->GetSkinner() == GetGUID() ? OWNER_PERMISSION : NONE_PERMISSION;
-            }
-            else if (loot_type == LOOT_SKINNING)
-            {
-                loot->clear();
-                loot->FillLoot(creature->GetCreatureTemplate()->SkinLootId, LootTemplates_Skinning, this, true);
-                creature->SetSkinner(GetGUID());
-                permission = OWNER_PERMISSION;
-            }
-            // set group rights only for loot_type != LOOT_SKINNING
-            else
-            {
-                if (Group* group = GetGroup())
-                {
-                    if (group == recipient->GetGroup())
-                    {
-                        switch (group->GetLootMethod())
-                        {
-                            case MASTER_LOOT:
-                                permission = group->GetMasterLooterGuid() == GetGUID() ? MASTER_PERMISSION : RESTRICTED_PERMISSION;
-                                break;
-                            case FREE_FOR_ALL:
-                                permission = ALL_PERMISSION;
-                                break;
-                            case ROUND_ROBIN:
-                                permission = ROUND_ROBIN_PERMISSION;
-                                break;
-                            default:
-                                permission = GROUP_PERMISSION;
-                                break;
-                        }
-                    }
-                    else
-                        permission = NONE_PERMISSION;
-                }
-                else if (recipient == this)
-                    permission = OWNER_PERMISSION;
-                else
-                    permission = NONE_PERMISSION;
+            break;
             }
         }
     }
 
-    // LOOT_INSIGNIA and LOOT_FISHINGHOLE unsupported by client
-    switch (loot_type)
+	// Should not happen
+    if (!loot)
     {
-        case LOOT_INSIGNIA:    loot_type = LOOT_SKINNING; break;
-        case LOOT_FISHINGHOLE: loot_type = LOOT_FISHING; break;
-        case LOOT_FISHING_JUNK: loot_type = LOOT_FISHING; break;
+        SendLootRelease(guid);
+        return;
+    }
+
+    // LOOT_INSIGNIA and LOOT_FISHINGHOLE unsupported by client
+    switch (type)
+    {
+        case LOOT_INSIGNIA:
+            type = LOOT_SKINNING;
+            break;
+        case LOOT_FISHINGHOLE:
+            type = LOOT_FISHING;
+            break;
+        case LOOT_FISHING_JUNK:
+            type = LOOT_FISHING;
+            break;
+        default:
+            break;
         default: break;
     }
 
     // need know merged fishing/corpse loot type for achievements
-    loot->loot_type = loot_type;
+    loot->Type = type;
+
+    PermissionTypes permission = loot->GetPermission(this);
 
     if (permission != NONE_PERMISSION)
     {
@@ -8844,26 +8821,39 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
             }
         }
 
-        SetLootGUID(guid);
 
         WorldPackets::Loot::LootResponse packet;
-        packet.LootObj = guid;
-        packet.Owner = loot->GetGUID();
-        packet.LootMethod = _lootMethod;
-        packet.AcquireReason = loot_type;
-        if (GetGroup() && (_lootMethod == GROUP_LOOT || _lootMethod == PERSONAL_LOOT)) /// @TODO: Need more research
+        packet.Owner = guid;
+        packet.LootObj = loot->GetGUID();
+        packet.LootMethod = type;
+        packet.AELooting = aeLooting;
+
+        if (Group* group = GetGroup())
+        {
+            packet.Threshold = group->GetLootThreshold();
             packet.PersonalLooting = true;
+			}
+        else
+        {
+            packet.Threshold = 2; // Default value
+            packet.PersonalLooting = true;
+        }
         packet.Acquired = true; // false == No Loot (this too^^)
         loot->BuildLootResponse(packet, this, permission);
+		
         SendDirectMessage(packet.Write());
 
         // add 'this' player as one of the players that are looting 'loot'
         loot->AddLooter(GetGUID());
+		
+		// Save cross reference to loot object
+        // This will be used to find loot object by guid
+        AddLootObject(loot);
     }
     else
-        SendLootError(GetLootGUID(), LOOT_ERROR_DIDNT_KILL);
+        SendLootError(guid, LOOT_ERROR_DIDNT_KILL);
 
-    if (loot_type == LOOT_CORPSE && !guid.IsItem())
+    if (type == LOOT_CORPSE && !guid.IsItem())
         SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_LOOTING);
 }
 
@@ -10311,7 +10301,7 @@ InventoryResult Player::CanTakeMoreSimilarItems(uint32 entry, uint32 count, Item
         return EQUIP_ERR_ITEM_MAX_COUNT;
     }
 
-    if (pItem && pItem->m_lootGenerated)
+    if (pItem && pItem->loot)
         return EQUIP_ERR_LOOT_GONE;
 
     // no maximum
@@ -10600,7 +10590,7 @@ InventoryResult Player::CanStoreItem(uint8 bag, uint8 slot, ItemPosCountVec &des
     if (pItem)
     {
         // item used
-        if (pItem->m_lootGenerated)
+        if (pItem->loot)
         {
             if (no_space_count)
                 *no_space_count = count;
@@ -10923,7 +10913,7 @@ InventoryResult Player::CanStoreItems(Item** items, int count, uint32* offending
             return EQUIP_ERR_ITEM_NOT_FOUND;
 
         // item used
-        if (item->m_lootGenerated)
+        if (item->loot)
             return EQUIP_ERR_LOOT_GONE;
 
         // item it 'bind'
@@ -11079,7 +11069,7 @@ InventoryResult Player::CanEquipItem(uint8 slot, uint16 &dest, Item* pItem, bool
         if (pProto)
         {
             // item used
-            if (pItem->m_lootGenerated)
+            if (pItem->loot)
                 return EQUIP_ERR_LOOT_GONE;
 
             if (pItem->IsBindedNotWith(this))
@@ -11250,7 +11240,7 @@ InventoryResult Player::CanUnequipItem(uint16 pos, bool swap) const
         return EQUIP_ERR_ITEM_NOT_FOUND;
 
     // item used
-    if (pItem->m_lootGenerated)
+    if (pItem->loot)
         return EQUIP_ERR_LOOT_GONE;
 
     // do not allow unequipping gear except weapons, offhands, projectiles, relics in
@@ -11285,7 +11275,7 @@ InventoryResult Player::CanBankItem(uint8 bag, uint8 slot, ItemPosCountVec &dest
         return swap ? EQUIP_ERR_CANT_SWAP : EQUIP_ERR_ITEM_NOT_FOUND;
 
     // item used
-    if (pItem->m_lootGenerated)
+    if (pItem->loot)
         return EQUIP_ERR_LOOT_GONE;
 
     if (pItem->IsBindedNotWith(this))
@@ -12499,7 +12489,7 @@ void Player::SplitItem(uint16 src, uint16 dst, uint32 count)
         return;
     }
 
-    if (pSrcItem->m_lootGenerated)                           // prevent split looting item (item
+    if (pSrcItem->loot)                           // prevent split looting item (item)
     {
         //best error message found for attempting to split while looting
         SendEquipError(EQUIP_ERR_SPLIT_FAILED, pSrcItem, NULL);
@@ -12900,7 +12890,7 @@ void Player::SwapItem(uint16 src, uint16 dst)
 
     // if player is moving bags and is looting an item inside this bag
     // release the loot
-    if (!GetLootGUID().IsEmpty())
+    if (!_lootObjects.empty())
     {
         bool released = false;
         if (IsBagPos(src))
@@ -12910,9 +12900,9 @@ void Player::SwapItem(uint16 src, uint16 dst)
             {
                 if (Item* bagItem = bag->GetItemByPos(i))
                 {
-                    if (bagItem->m_lootGenerated)
+                    if (bagItem->loot)
                     {
-                        m_session->DoLootRelease(GetLootGUID());
+                        m_session->DoLootRelease(bagItem->loot);
                         released = true;                    // so we don't need to look at dstBag
                         break;
                     }
@@ -12927,9 +12917,9 @@ void Player::SwapItem(uint16 src, uint16 dst)
             {
                 if (Item* bagItem = bag->GetItemByPos(i))
                 {
-                    if (bagItem->m_lootGenerated)
+                    if (bagItem->loot)
                     {
-                        m_session->DoLootRelease(GetLootGUID());
+                        m_session->DoLootRelease(bagItem->loot);
                         released = true;                    // not realy needed here
                         break;
                     }
@@ -17489,7 +17479,7 @@ void Player::_LoadCUFProfiles(PreparedQueryResult result)
     while (result->NextRow());
 }
 
-bool Player::isAllowedToLoot(const Creature* creature)
+bool Player::IsAllowedToLoot(const Creature* creature)
 {
     if (!creature->isDead() || !creature->IsDamageEnoughForLootingAndReward())
         return false;
@@ -17497,20 +17487,29 @@ bool Player::isAllowedToLoot(const Creature* creature)
     if (HasPendingBind())
         return false;
 
-    const Loot* loot = &creature->loot;
-    if (loot->isLooted()) // nothing to loot or everything looted.
+    const Loot* loot = creature->loot;
+
+    if (!loot) // loot not generated
         return false;
 
-    if (loot->loot_type == LOOT_SKINNING)
-        return creature->GetSkinner() == GetGUID();
+    if (loot->IsLooted()) // nothing to loot or everything looted.
+        return false;
+
+    Player* recipient = loot->GetRecipient();
 
     Group* thisGroup = GetGroup();
-    if (!thisGroup)
-        return this == creature->GetLootRecipient();
-    else if (thisGroup != creature->GetLootRecipientGroup())
+    // No loot recipient
+    if (!recipient)
         return false;
 
-    switch (thisGroup->GetLootMethod())
+    Group* group = GetGroup();
+
+    if (!group)
+        return this == recipient;
+    else if (group != recipient->GetGroup()) // Player is not in the same group as recipient
+        return false;
+
+    switch (group->GetLootMethod())
     {
         case PERSONAL_LOOT: /// @todo implement personal loot (http://wow.gamepedia.com/Loot#Personal_Loot)
             return false;
@@ -17520,22 +17519,22 @@ bool Player::isAllowedToLoot(const Creature* creature)
         case ROUND_ROBIN:
             // may only loot if the player is the loot roundrobin player
             // or if there are free/quest/conditional item for the player
-            if (loot->roundRobinPlayer.IsEmpty() || loot->roundRobinPlayer == GetGUID())
+            if (loot->RoundRobinPlayer.IsEmpty() || loot->RoundRobinPlayer == GetGUID())
                 return true;
 
-            return loot->hasItemFor(this);
+            return loot->HasItemFor(this);
         case GROUP_LOOT:
         case NEED_BEFORE_GREED:
             // may only loot if the player is the loot roundrobin player
             // or item over threshold (so roll(s) can be launched)
             // or if there are free/quest/conditional item for the player
-            if (loot->roundRobinPlayer.IsEmpty() || loot->roundRobinPlayer == GetGUID())
+            if (loot->RoundRobinPlayer.IsEmpty() || loot->RoundRobinPlayer == GetGUID())
                 return true;
 
-            if (loot->hasOverThresholdItem())
+            if (loot->HasOverThresholdItem())
                 return true;
 
-            return loot->hasItemFor(this);
+            return loot->HasItemFor(this);
     }
 
     return false;
@@ -24701,8 +24700,8 @@ bool Player::IsBaseRuneSlotsOnCooldown(RuneType runeType) const
 
 void Player::AutoStoreLoot(uint8 bag, uint8 slot, uint32 loot_id, LootStore const& store, bool broadcast)
 {
-    Loot loot;
-    loot.FillLoot (loot_id, store, this, true);
+    Loot loot(ObjectGuid::Empty);
+    loot.FillLoot(loot_id, store, this, true);
 
     uint32 max_slot = loot.GetMaxSlotInLootFor(this);
     for (uint32 i = 0; i < max_slot; ++i)
@@ -24742,14 +24741,14 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
 
     if (!item->AllowedForPlayer(this))
     {
-        SendLootRelease(GetLootGUID());
+        SendLootRelease(loot->GetOwner()->GetGUID());
         return;
     }
 
     // questitems use the blocked field for other purposes
     if (!qitem && item->is_blocked)
     {
-        SendLootRelease(GetLootGUID());
+        SendLootRelease(loot->GetOwner()->GetGUID());
         return;
     }
 
@@ -24764,7 +24763,7 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
             qitem->is_looted = true;
             //freeforall is 1 if everyone's supposed to get the quest item.
             if (item->freeforall || loot->GetPlayerQuestItems().size() == 1)
-                SendNotifyLootItemRemoved(GetLootGUID(), loot->GetGUID(), lootSlot);
+                SendNotifyLootItemRemoved(loot->GetOwner()->GetGUID(), loot->GetGUID(), lootSlot); /// @todo 6.x loot update
             else
                 loot->NotifyQuestItemRemoved(qitem->index);
         }
@@ -24774,7 +24773,7 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
             {
                 //freeforall case, notify only one player of the removal
                 ffaitem->is_looted = true;
-                SendNotifyLootItemRemoved(GetLootGUID(), loot->GetGUID(), lootSlot);
+                SendNotifyLootItemRemoved(loot->GetOwner()->GetGUID(), loot->GetGUID(), lootSlot);
             }
             else
             {
@@ -24789,7 +24788,7 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
         if (!item->freeforall)
             item->is_looted = true;
 
-        --loot->unlootedCount;
+        --loot->UnlootedCount;
 
         if (sObjectMgr->GetItemTemplate(item->itemid))
             if (newitem->GetQuality() > ITEM_QUALITY_EPIC || (newitem->GetQuality() == ITEM_QUALITY_EPIC && newitem->GetItemLevel(this) >= MinNewsItemLevel[sWorld->getIntConfig(CONFIG_EXPANSION)]))
@@ -24798,11 +24797,11 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
 
         SendNewItem(newitem, uint32(item->count), false, false, true);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_ITEM, item->itemid, item->count);
-        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_TYPE, item->itemid, item->count, loot->loot_type);
+        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_TYPE, item->itemid, item->count, loot->Type);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_EPIC_ITEM, item->itemid, item->count);
 
         // LootItem is being removed (looted) from the container, delete it from the DB.
-        if (!loot->containerID.IsEmpty())
+        if (!loot->ContainerID.IsEmpty())
             loot->DeleteLootItemFromContainerItemDB(item->itemid);
     }
     else

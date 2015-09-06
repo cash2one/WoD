@@ -107,6 +107,18 @@ WorldPacket const* WorldPackets::Loot::CoinRemoved::Write()
     return &_worldPacket;
 }
 
+WorldPacket const* WorldPackets::Loot::AELootTargets::Write()
+{
+    _worldPacket << Count;
+
+    return &_worldPacket;
+}
+
+WorldPacket const* WorldPackets::Loot::AELootTargetAck::Write()
+{
+    return &_worldPacket;
+}
+
 void WorldPackets::Loot::LootRoll::Read()
 {
     _worldPacket >> LootObj;
