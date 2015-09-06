@@ -73,7 +73,9 @@ class Corpse : public WorldObject, public GridObject<Corpse>
         GridCoord const& GetGridCoord() const { return _gridCoord; }
         void SetGridCoord(GridCoord const& gridCoord) { _gridCoord = gridCoord; }
 
-        Loot* loot;                                          // remove insignia ONLY at BG
+        Loot loot;                                          // remove insignia ONLY at BG
+        Player* lootRecipient;
+        bool lootForBody;
 
         bool IsExpired(time_t t) const;
 

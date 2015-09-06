@@ -144,24 +144,6 @@ namespace WorldPackets
             ObjectGuid LootObj;
         };
 
-        class AELootTargets final : public ServerPacket
-        {
-        public:
-            AELootTargets() : ServerPacket(SMSG_AE_LOOT_TARGETS, 4) { }
-
-            WorldPacket const* Write() override;
-
-            uint32 Count = 0;
-        };
-
-        class AELootTargetAck final : public ServerPacket
-        {
-        public:
-            AELootTargetAck() : ServerPacket(SMSG_AE_LOOT_TARGET_ACK, 0) { }
-
-            WorldPacket const* Write() override;
-        };
-
         class LootRoll final : public ClientPacket
         {
         public:

@@ -35,14 +35,11 @@ Corpse::Corpse(CorpseType type) : WorldObject(type != CORPSE_BONES), m_type(type
 
     m_time = time(NULL);
 
-    loot = nullptr;
+    lootForBody = false;
+    lootRecipient = NULL;
 }
 
-Corpse::~Corpse()
-{
-    if (loot)
-        delete loot;
-}
+Corpse::~Corpse() { }
 
 void Corpse::AddToWorld()
 {

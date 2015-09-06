@@ -239,7 +239,7 @@ Item::Item()
     uState = ITEM_NEW;
     uQueuePos = -1;
     m_container = NULL;
-    loot = nullptr;
+    m_lootGenerated = false;
     mb_in_trade = false;
     m_lastPlayedTimeUpdate = time(NULL);
 
@@ -387,7 +387,7 @@ void Item::SaveToDB(SQLTransaction& trans)
                 CharacterDatabase.CommitTransaction(trans);
 
             // Delete the items if this is a container
-            if (loot && !loot->IsLooted())
+            if (!loot.isLooted())
                 ItemContainerDeleteLootMoneyAndLootItemsFromDB();
 
             delete this;
@@ -516,7 +516,7 @@ void Item::DeleteFromDB(SQLTransaction& trans)
     DeleteFromDB(trans, GetGUID().GetCounter());
 
     // Delete the items if this is a container
-    if (loot && !loot->IsLooted())
+    if (!loot.isLooted())
         ItemContainerDeleteLootMoneyAndLootItemsFromDB();
 }
 
@@ -757,7 +757,7 @@ bool Item::IsEquipped() const
 
 bool Item::CanBeTraded(bool mail, bool trade) const
 {
-    if (loot)
+    if (m_lootGenerated)
         return false;
 
     if ((!mail || !IsBoundAccountWide()) && (IsSoulBound() && (!HasFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_BOP_TRADEABLE) || !trade)))
@@ -769,6 +769,8 @@ bool Item::CanBeTraded(bool mail, bool trade) const
     if (Player* owner = GetOwner())
     {
         if (owner->CanUnequipItem(GetPos(), false) != EQUIP_ERR_OK)
+            return false;
+        if (owner->GetLootGUID() == GetGUID())
             return false;
     }
 
@@ -823,7 +825,7 @@ bool Item::IsBoundByEnchant() const
 InventoryResult Item::CanBeMergedPartlyWith(ItemTemplate const* proto) const
 {
     // not allow merge looting currently items
-    if (loot)
+    if (m_lootGenerated)
         return EQUIP_ERR_LOOT_GONE;
 
     // check item type
@@ -1562,39 +1564,36 @@ uint32 Item::GetSpecialPrice(ItemTemplate const* proto, uint32 minimumPrice /*= 
 
 void Item::ItemContainerSaveLootToDB()
 {
-    if (!loot)
-        return;
-
     // Saves the money and item loot associated with an openable item to the DB
-    if (loot->IsLooted()) // no money and no loot
+    if (loot.isLooted()) // no money and no loot
         return;
 
     SQLTransaction trans = CharacterDatabase.BeginTransaction();
 
-    loot->ContainerID = GetGUID(); // Save this for when a LootItem is removed
+    loot.containerID = GetGUID(); // Save this for when a LootItem is removed
 
     // Save money
-    if (loot->Gold > 0)
+    if (loot.gold > 0)
     {
         PreparedStatement* stmt_money = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEMCONTAINER_MONEY);
-        stmt_money->setUInt64(0, loot->ContainerID.GetCounter());
+        stmt_money->setUInt64(0, loot.containerID.GetCounter());
         trans->Append(stmt_money);
 
         stmt_money = CharacterDatabase.GetPreparedStatement(CHAR_INS_ITEMCONTAINER_MONEY);
-        stmt_money->setUInt64(0, loot->ContainerID.GetCounter());
-        stmt_money->setUInt32(1, loot->Gold);
+        stmt_money->setUInt64(0, loot.containerID.GetCounter());
+        stmt_money->setUInt32(1, loot.gold);
         trans->Append(stmt_money);
     }
 
     // Save items
-    if (loot->UnlootedCount > 0)
+    if (!loot.isLooted())
     {
         PreparedStatement* stmt_items = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEMCONTAINER_ITEMS);
-        stmt_items->setUInt64(0, loot->ContainerID.GetCounter());
+        stmt_items->setUInt64(0, loot.containerID.GetCounter());
         trans->Append(stmt_items);
 
         // Now insert the items
-        for (LootItemList::const_iterator _li = loot->Items.begin(); _li != loot->Items.end(); ++_li)
+        for (LootItemList::const_iterator _li = loot.items.begin(); _li != loot.items.end(); ++_li)
         {
             // When an item is looted, it doesn't get removed from the items collection
             //  but we don't want to resave it.
@@ -1612,7 +1611,7 @@ void Item::ItemContainerSaveLootToDB()
             stmt_items = CharacterDatabase.GetPreparedStatement(CHAR_INS_ITEMCONTAINER_ITEMS);
 
             // container_id, item_id, item_count, follow_rules, ffa, blocked, counted, under_threshold, needs_quest, rnd_prop, rnd_suffix
-            stmt_items->setUInt64(0, loot->ContainerID.GetCounter());
+            stmt_items->setUInt64(0, loot.containerID.GetCounter());
             stmt_items->setUInt32(1, _li->itemid);
             stmt_items->setUInt32(2, _li->count);
             stmt_items->setBool(3, _li->follow_loot_rules);
@@ -1634,25 +1633,25 @@ bool Item::ItemContainerLoadLootFromDB()
 {
     // Loads the money and item loot associated with an openable item from the DB
     // Default. If there are no records for this item then it will be rolled for in Player::SendLoot()
-    loot = new Loot(ObjectGuid::Empty);
+    m_lootGenerated = false;
 
     // Save this for later use
-    loot->ContainerID = GetGUID();
+    loot.containerID = GetGUID();
 
     // First, see if there was any money loot. This gets added directly to the container.
     PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_ITEMCONTAINER_MONEY);
-    stmt->setUInt64(0, loot->ContainerID.GetCounter());
+    stmt->setUInt64(0, loot.containerID.GetCounter());
     PreparedQueryResult money_result = CharacterDatabase.Query(stmt);
 
     if (money_result)
     {
         Field* fields = money_result->Fetch();
-        loot->Gold = fields[0].GetUInt32();
+        loot.gold = fields[0].GetUInt32();
     }
 
     // Next, load any items that were saved
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_ITEMCONTAINER_ITEMS);
-    stmt->setUInt64(0, loot->ContainerID.GetCounter());
+    stmt->setUInt64(0, loot.containerID.GetCounter());
     PreparedQueryResult item_result = CharacterDatabase.Query(stmt);
 
     if (item_result)
@@ -1691,26 +1690,20 @@ bool Item::ItemContainerLoadLootFromDB()
                     loot_item.allowedGUIDs.insert(GetOwner()->GetGUID());
 
                 // Finally add the LootItem to the container
-                loot->Items.push_back(loot_item);
+                loot.items.push_back(loot_item);
 
                 // Increment unlooted count
-                loot->UnlootedCount++;
+                loot.unlootedCount++;
 
             }
             while (item_result->NextRow());
         }
     }
 
-    if (loot->IsLooted())
-    {
-        // Loot is empty, we don't need to store it
-        delete loot;
-        loot = nullptr;
+    // Mark the item if it has loot so it won't be generated again on open
+    m_lootGenerated = !loot.isLooted();
 
-        return false;
-    }
-    else
-        return true;
+    return m_lootGenerated;
 }
 
 void Item::ItemContainerDeleteLootItemsFromDB()

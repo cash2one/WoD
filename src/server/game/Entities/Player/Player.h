@@ -58,7 +58,6 @@ class SpellCastTargets;
 class UpdateMask;
 
 typedef std::deque<Mail*> PlayerMails;
-typedef std::map<ObjectGuid, Loot*> PlayerLootObjects;
 
 #define PLAYER_MAX_SKILLS                       128
 enum SkillFieldOffset
@@ -2114,19 +2113,8 @@ class Player : public Unit, public GridObject<Player>
         void SetLastRuneGraceTimer(uint8 index, uint32 timer) { m_lastRuneGraceTimers[index] = timer; }
         void UpdateAllRunesRegen();
 
-        /*ObjectGuid GetLootGUID() const { return m_lootGuid; }
-        void SetLootGUID(ObjectGuid guid) { m_lootGuid = guid; }*/
-        void AddLootObject(Loot* loot) { _lootObjects[loot->GetGUID()] = loot; }
-        void RemoveLootObject(ObjectGuid const& guid) { _lootObjects.erase(guid); }
-        PlayerLootObjects& GetLootObjects() { return _lootObjects; }
-        Loot* GetLootObject(ObjectGuid const& guid)
-        {
-            auto itr = _lootObjects.find(guid);
-            if (itr != _lootObjects.end())
-                return itr->second;
-            else
-                return nullptr;
-        }
+        ObjectGuid GetLootGUID() const { return m_lootGuid; }
+        void SetLootGUID(ObjectGuid guid) { m_lootGuid = guid; }
 
         void RemovedInsignia(Player* looterPlr);
 
@@ -2322,7 +2310,7 @@ class Player : public Unit, public GridObject<Player>
         PlayerMenu* PlayerTalkClass;
         std::vector<ItemSetEffect*> ItemSetEff;
 
-        void SendLoot(ObjectGuid guid, LootType type, bool aeLooting = false);
+        void SendLoot(ObjectGuid guid, LootType loot_type);
         void SendLootError(ObjectGuid guid, LootError error);
         void SendLootRelease(ObjectGuid guid);
         void SendNotifyLootItemRemoved(ObjectGuid owner, ObjectGuid lootObj, uint8 lootSlot);
@@ -2555,7 +2543,7 @@ class Player : public Unit, public GridObject<Player>
         void SetMap(Map* map) override;
         void ResetMap() override;
 
-        bool IsAllowedToLoot(const Creature* creature);
+        bool isAllowedToLoot(const Creature* creature);
 
         DeclinedName const* GetDeclinedNames() const { return m_declinedname; }
         uint8 GetRunesState() const { return m_runes->runeState; }
@@ -2768,8 +2756,7 @@ class Player : public Unit, public GridObject<Player>
         time_t m_lastHonorUpdateTime;
 
         void outDebugValues() const;
-
-        PlayerLootObjects _lootObjects;
+        ObjectGuid m_lootGuid;
 
         uint32 m_team;
         uint32 m_nextSave;

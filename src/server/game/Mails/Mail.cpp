@@ -89,7 +89,7 @@ void MailDraft::prepareItems(Player* receiver, SQLTransaction& trans)
 
     m_mailTemplateItemsNeed = false;
 
-    Loot mailLoot(ObjectGuid::Empty);
+    Loot mailLoot;
 
     // can be empty
     mailLoot.FillLoot(m_mailTemplateId, LootTemplates_Mail, receiver, true, true);

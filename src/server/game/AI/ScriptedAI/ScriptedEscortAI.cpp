@@ -189,7 +189,7 @@ void npc_escortAI::EnterEvadeMode()
     me->RemoveAllAuras();
     me->DeleteThreatList();
     me->CombatStop(true);
-    me->SetTapper(nullptr);
+    me->SetLootRecipient(NULL);
 
     if (HasEscortState(STATE_ESCORT_ESCORTING))
     {

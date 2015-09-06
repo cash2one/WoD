@@ -376,7 +376,7 @@ void WorldSession::HandleSellItemOpcode(WorldPackets::Item::SellItem& packet)
         }
 
         // prevent sell currently looted item
-        if (pItem->loot && pItem->loot->HasItemFor(_player))
+        if (_player->GetLootGUID() == pItem->GetGUID())
         {
             _player->SendSellError(SELL_ERR_CANT_SELL_ITEM, creature, packet.ItemGUID);
             return;
@@ -1103,7 +1103,7 @@ void WorldSession::HandleItemRefund(WorldPacket &recvData)
     }
 
     // Don't try to refund item currently being disenchanted
-    if (item->loot && item->loot->HasItemFor(_player))
+    if (_player->GetLootGUID() == guid)
         return;
 
     GetPlayer()->RefundItem(item);

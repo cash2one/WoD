@@ -138,7 +138,8 @@ bool ForcedDespawnDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
 }
 
 Creature::Creature(bool isWorldObject): Unit(isWorldObject), MapObject(),
-m_PlayerDamageReq(0), _pickpocketLootRestore(0), m_corpseRemoveTime(0), m_respawnTime(0),
+m_groupLootTimer(0), m_PlayerDamageReq(0),
+_pickpocketLootRestore(0), m_corpseRemoveTime(0), m_respawnTime(0),
 m_respawnDelay(300), m_corpseDelay(60), m_respawnradius(0.0f), m_reactState(REACT_AGGRESSIVE),
 m_defaultMovementType(IDLE_MOTION_TYPE), m_spawnId(UI64LIT(0)), m_equipmentId(0), m_originalEquipmentId(0), m_AlreadyCallAssistance(false),
 m_AlreadySearchedAssistance(false), m_regenHealth(true), m_AI_locked(false), m_meleeDamageSchoolMask(SPELL_SCHOOL_MASK_NORMAL),
@@ -160,16 +161,12 @@ m_originalEntry(0), m_homePosition(), m_transportHomePosition(), m_creatureInfo(
     TriggerJustRespawned = false;
     m_isTempWorldObject = false;
     _focusSpell = NULL;
-    loot = nullptr;
 }
 
 Creature::~Creature()
 {
     delete i_AI;
-    i_AI = nullptr;
-
-    delete loot;
-    loot = nullptr;
+    i_AI = NULL;
 
     //if (m_uint32Values)
     //    TC_LOG_ERROR("entities.unit", "Deconstruct Creature Entry = %u", GetEntry());
@@ -246,10 +243,7 @@ void Creature::RemoveCorpse(bool setSpawnTime)
     setDeathState(DEAD);
     RemoveAllAuras();
     UpdateObjectVisibility();
-
-    delete loot;
-    loot = nullptr;
-
+    loot.clear();
     uint32 respawnDelay = m_respawnDelay;
     if (IsAIEnabled)
         AI()->CorpseRemoved(respawnDelay);
@@ -300,6 +294,9 @@ bool Creature::InitEntry(uint32 entry, CreatureData const* data /*= nullptr*/)
     if (!cinfo)
         cinfo = normalInfo;
 
+    // Initialize loot duplicate count depending on raid difficulty
+    if (GetMap()->Is25ManRaid())
+        loot.maxDuplicates = 3;
 
     SetEntry(entry);                                        // normal entry always
     m_creatureInfo = cinfo;                                 // map mode related always
@@ -504,15 +501,23 @@ void Creature::Update(uint32 diff)
             if (m_deathState != CORPSE)
                 break;
 
-            // Loot::UpdateRollTimer returns false if roll is ongoing to prevent corpse despawning
-            if (!loot || (loot && loot->UpdateRollTimer(diff)))
+            if (m_groupLootTimer && !lootingGroupLowGUID.IsEmpty())
             {
-                if (m_corpseRemoveTime <= time(NULL))
+                if (m_groupLootTimer <= diff)
                 {
-                    RemoveCorpse(false);
-                    TC_LOG_DEBUG("entities.unit", "Removing corpse... %u ", GetUInt32Value(OBJECT_FIELD_ENTRY));
-                }
+                    if (Group* group = sGroupMgr->GetGroupByGUID(lootingGroupLowGUID))
+                        group->EndRoll(&loot);
 
+                    m_groupLootTimer = 0;
+                    lootingGroupLowGUID.Clear();
+                }
+                else
+                    m_groupLootTimer -= diff;
+            }
+            else if (m_corpseRemoveTime <= time(NULL))
+            {
+                RemoveCorpse(false);
+                TC_LOG_DEBUG("entities.unit", "Removing corpse... %u ", GetUInt32Value(OBJECT_FIELD_ENTRY));
             }
             break;
         }
@@ -874,23 +879,23 @@ bool Creature::isCanTrainingAndResetTalentsOf(Player* player) const
         && player->getClass() == GetCreatureTemplate()->trainer_class;
 }
 
-Player* Creature::GetTapper() const
+Player* Creature::GetLootRecipient() const
 {
-    if (!_tapper)
+    if (!m_lootRecipient)
         return NULL;
 
-    return ObjectAccessor::FindConnectedPlayer(_tapper);
+    return ObjectAccessor::FindConnectedPlayer(m_lootRecipient);
 }
 
-Group* Creature::GetTapperGroup() const
+Group* Creature::GetLootRecipientGroup() const
 {
-    if (_tapperGroup.IsEmpty())
+    if (m_lootRecipientGroup.IsEmpty())
         return NULL;
 
-    return sGroupMgr->GetGroupByGUID(_tapperGroup);
+    return sGroupMgr->GetGroupByGUID(m_lootRecipientGroup);
 }
 
-void Creature::SetTapper(Unit* unit)
+void Creature::SetLootRecipient(Unit* unit)
 {
     // set the player whose group should receive the right
     // to loot the creature after it dies
@@ -898,8 +903,8 @@ void Creature::SetTapper(Unit* unit)
 
     if (!unit)
     {
-        _tapper.Clear();
-        _tapperGroup.Clear();
+        m_lootRecipient.Clear();
+        m_lootRecipientGroup.Clear();
         RemoveFlag(OBJECT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE | UNIT_DYNFLAG_TAPPED);
         return;
     }
@@ -911,21 +916,21 @@ void Creature::SetTapper(Unit* unit)
     if (!player)                                             // normal creature, no player involved
         return;
 
-    _tapper = player->GetGUID();
+    m_lootRecipient = player->GetGUID();
     if (Group* group = player->GetGroup())
-        _tapperGroup = group->GetGUID();
+        m_lootRecipientGroup = group->GetGUID();
 
     SetFlag(OBJECT_DYNAMIC_FLAGS, UNIT_DYNFLAG_TAPPED);
 }
 
 // return true if this creature is tapped by the player or by a member of his group.
-bool Creature::IsTappedBy(Player const* player) const
+bool Creature::isTappedBy(Player const* player) const
 {
-    if (player->GetGUID() == _tapper)
+    if (player->GetGUID() == m_lootRecipient)
         return true;
 
     Group const* playerGroup = player->GetGroup();
-    if (!playerGroup || playerGroup != GetTapperGroup()) // if we dont have a group we arent the recipient
+    if (!playerGroup || playerGroup != GetLootRecipientGroup()) // if we dont have a group we arent the recipient
         return false;                                           // if creature doesnt have group bound it means it was solo killed by someone else
 
     return true;
@@ -1283,6 +1288,8 @@ bool Creature::LoadCreatureFromDB(ObjectGuid::LowType spawnId, Map* map, bool ad
 
     m_creatureData = data;
 
+    loot.SetGUID(ObjectGuid::Create<HighGuid::LootObject>(data->mapid, data->id, GetMap()->GenerateLowGuid<HighGuid::LootObject>()));
+
     if (addToMap && !GetMap()->AddToMap(this))
         return false;
     return true;
@@ -1528,7 +1535,7 @@ void Creature::setDeathState(DeathState s)
         //if (IsPet())
         //    setActive(true);
         SetFullHealth();
-        SetTapper(nullptr);
+        SetLootRecipient(NULL);
         ResetPlayerDamageReq();
 
         UpdateMovementFlags();
@@ -1566,9 +1573,7 @@ void Creature::Respawn(bool force)
             GetName().c_str(), GetGUID().ToString().c_str());
         m_respawnTime = 0;
         ResetPickPocketRefillTimer();
-        delete loot;
-        loot = nullptr;
-
+        loot.clear();
         if (m_originalEntry != GetEntry())
             UpdateEntry(m_originalEntry);
 
@@ -2232,7 +2237,7 @@ void Creature::GetRespawnPosition(float &x, float &y, float &z, float* ori, floa
 
 void Creature::AllLootRemovedFromCorpse()
 {
-    if (loot->Type != LOOT_SKINNING && !IsPet() && GetCreatureTemplate()->SkinLootId && IsTapped())
+    if (loot.loot_type != LOOT_SKINNING && !IsPet() && GetCreatureTemplate()->SkinLootId && hasLootRecipient())
         if (LootTemplates_Skinning.HaveLootFor(GetCreatureTemplate()->SkinLootId))
             SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_SKINNABLE);
 
@@ -2244,7 +2249,7 @@ void Creature::AllLootRemovedFromCorpse()
     float decayRate = sWorld->getRate(RATE_CORPSE_DECAY_LOOTED);
 
     // corpse skinnable, but without skinning flag, and then skinned, corpse will despawn next update
-    if (loot->Type == LOOT_SKINNING)
+    if (loot.loot_type == LOOT_SKINNING)
         m_corpseRemoveTime = now;
     else
         m_corpseRemoveTime = now + uint32(m_corpseDelay * decayRate);

@@ -361,7 +361,8 @@ class Item : public Object
         int32 GetSpellCharges(uint8 index/*0..5*/ = 0) const { return GetInt32Value(ITEM_FIELD_SPELL_CHARGES + index); }
         void  SetSpellCharges(uint8 index/*0..5*/, int32 value) { SetInt32Value(ITEM_FIELD_SPELL_CHARGES + index, value); }
 
-        Loot* loot;
+        Loot loot;
+        bool m_lootGenerated;
 
         // Update States
         ItemUpdateState GetState() const { return uState; }

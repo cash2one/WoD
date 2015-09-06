@@ -736,8 +736,8 @@ uint32 Unit::DealDamage(Unit* victim, uint32 damage, CleanDamage const* cleanDam
         victim->ToPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HIGHEST_HIT_RECEIVED, damage);
     else if (!victim->IsControlledByPlayer() || victim->IsVehicle())
     {
-        if (!victim->ToCreature()->IsTapped())
-            victim->ToCreature()->SetTapper(this);
+        if (!victim->ToCreature()->hasLootRecipient())
+            victim->ToCreature()->SetLootRecipient(this);
 
         if (IsControlledByPlayer())
             victim->ToCreature()->LowerPlayerDamageReq(health < damage ?  health : damage);
@@ -13445,12 +13445,11 @@ void Unit::Kill(Unit* victim, bool durabilityLoss)
     {
         isRewardAllowed = creature->IsDamageEnoughForLootingAndReward();
         if (!isRewardAllowed)
-            creature->SetTapper(NULL);
+            creature->SetLootRecipient(NULL);
     }
 
-    if (isRewardAllowed && creature)
-        if (Player* tapper = creature->GetTapper())
-            player = tapper;
+    if (isRewardAllowed && creature && creature->GetLootRecipient())
+        player = creature->GetLootRecipient();
 
     // Reward player, his pets, and group/raid members
     // call kill spell proc event (before real die and combat stop to triggering auras removed at death/combat stop)
@@ -13462,6 +13461,7 @@ void Unit::Kill(Unit* victim, bool durabilityLoss)
 
         Player* looter = player;
         Group* group = player->GetGroup();
+        bool hasLooterGuid = false;
 
         if (group)
         {
@@ -13471,7 +13471,14 @@ void Unit::Kill(Unit* victim, bool durabilityLoss)
             {
                 group->UpdateLooterGuid(creature, true);
                 if (!group->GetLooterGuid().IsEmpty())
+                {
                     looter = ObjectAccessor::FindPlayer(group->GetLooterGuid());
+                    if (looter)
+                    {
+                        hasLooterGuid = true;
+                        creature->SetLootRecipient(looter);   // update creature loot recipient to the allowed looter.
+                    }
+                }
             }
         }
         else
@@ -13487,23 +13494,27 @@ void Unit::Kill(Unit* victim, bool durabilityLoss)
             }
         }
 
-        // Delete old loot if such exists (pickpocket)
-        if (creature->loot)
-            delete creature->loot;
-
-            // Generate loot before updating looter
-        creature->loot = Loot::CreateCreatureLoot(creature, looter);
-
-           if (group)
+        // Generate loot before updating looter
+        if (creature)
         {
-            if (looter)
-                group->SendLooter(creature, looter);
-            else
-                group->SendLooter(creature, NULL);
+            Loot* loot = &creature->loot;
+
+            loot->clear();
+            if (uint32 lootid = creature->GetCreatureTemplate()->lootid)
+                loot->FillLoot(lootid, LootTemplates_Creature, looter, false, false, creature->GetLootMode());
+
+            loot->generateMoneyLoot(creature->GetCreatureTemplate()->mingold, creature->GetCreatureTemplate()->maxgold);
+
+            if (group)
+            {
+                if (hasLooterGuid)
+                    group->SendLooter(creature, looter);
+                else
+                    group->SendLooter(creature, NULL);
 
                 // Update round robin looter only if the creature had loot
-            if (!creature->loot->Empty())
-                group->UpdateLooterGuid(creature);
+                if (!loot->empty())
+                    group->UpdateLooterGuid(creature);
             }
         }
 
@@ -13609,7 +13620,7 @@ void Unit::Kill(Unit* victim, bool durabilityLoss)
             creature->DeleteThreatList();
 
             // must be after setDeathState which resets dynamic flags
-            if (creature->loot && !creature->loot->IsLooted())
+            if (!creature->loot.isLooted())
                 creature->SetFlag(OBJECT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE);
             else
                 creature->AllLootRemovedFromCorpse();
@@ -16185,14 +16196,14 @@ void Unit::BuildValuesUpdate(uint8 updateType, ByteBuffer* data, Player* target)
 
                 if (creature)
                 {
-                    if (creature->IsTapped())
+                    if (creature->hasLootRecipient())
                     {
                         dynamicFlags |= UNIT_DYNFLAG_TAPPED;
-                        if (creature->IsTappedBy(target))
+                        if (creature->isTappedBy(target))
                             dynamicFlags |= UNIT_DYNFLAG_TAPPED_BY_PLAYER;
                     }
 
-                    if (!target->IsAllowedToLoot(creature))
+                    if (!target->isAllowedToLoot(creature))
                         dynamicFlags &= ~UNIT_DYNFLAG_LOOTABLE;
                 }
 
