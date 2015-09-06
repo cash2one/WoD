@@ -8798,7 +8798,8 @@ void Player::SendLoot(ObjectGuid guid, LootType type, bool aeLooting /* = false 
             break;
         default:
             break;
-        default: break;
+        default:
+			break;
     }
 
     // need know merged fishing/corpse loot type for achievements
@@ -8808,20 +8809,6 @@ void Player::SendLoot(ObjectGuid guid, LootType type, bool aeLooting /* = false 
 
     if (permission != NONE_PERMISSION)
     {
-        LootMethod _lootMethod = FREE_FOR_ALL;
-        if (Group* group = GetGroup())
-        {
-            if (Creature* creature = GetMap()->GetCreature(guid))
-            {
-                if (Player* recipient = creature->GetLootRecipient())
-                {
-                    if (group == recipient->GetGroup())
-                        _lootMethod = group->GetLootMethod();
-                }
-            }
-        }
-
-
         WorldPackets::Loot::LootResponse packet;
         packet.Owner = guid;
         packet.LootObj = loot->GetGUID();

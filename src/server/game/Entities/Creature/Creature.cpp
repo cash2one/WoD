@@ -890,7 +890,7 @@ Group* Creature::GetTapperGroup() const
     return sGroupMgr->GetGroupByGUID(_tapperGroup);
 }
 
-void Creature::SetLootRecipient(Unit* unit)
+void Creature::SetTapper(Unit* unit)
 {
     // set the player whose group should receive the right
     // to loot the creature after it dies
