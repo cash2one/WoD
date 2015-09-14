@@ -33,7 +33,9 @@
 #include "AccountMgr.h"
 #include <unordered_set>
 
+class BattlePetMgr;
 class Channel;
+class CollectionMgr;
 class Creature;
 class GameObject;
 class InstanceSave;
@@ -115,6 +117,17 @@ namespace WorldPackets
         class GetPVPOptionsEnabled;
         class RequestBattlefieldStatus;
         class ReportPvPPlayerAFK;
+    }
+
+    namespace BattlePet
+    {
+        class BattlePetRequestJournal;
+        class BattlePetSetBattleSlot;
+        class BattlePetModifyName;
+        class BattlePetDeletePet;
+        class BattlePetSetFlags;
+        class BattlePetSummon;
+        class CageBattlePet;
     }
 
     namespace BlackMarket
@@ -320,6 +333,7 @@ namespace WorldPackets
         class WrapItem;
         class CancelTempEnchantment;
         class TransmogrifyItems;
+        class UseCritterItem;
     }
 
     namespace Loot
@@ -670,8 +684,6 @@ enum Tutorials
 
 #define MAX_ACCOUNT_TUTORIAL_VALUES 8
 
-typedef std::map<uint32, bool> ToyBoxContainer;
-
 struct AccountData
 {
     time_t Time = 0;
@@ -895,12 +907,6 @@ class WorldSession
         void SetAccountData(AccountDataType type, uint32 time, std::string const& data);
         void LoadAccountData(PreparedQueryResult result, uint32 mask);
 
-        // Account Toys
-        void LoadAccountToys(PreparedQueryResult result);
-        void SaveAccountToys(SQLTransaction& trans);
-        bool UpdateAccountToys(uint32 itemId, bool isFavourite /*= false*/);
-        ToyBoxContainer const& GetAccountToys() const { return _toys; }
-
         void LoadTutorialsData(PreparedQueryResult result);
         void SendTutorialsData();
         void SaveTutorialsData(SQLTransaction& trans);
@@ -986,6 +992,11 @@ class WorldSession
         // Recruit-A-Friend Handling
         uint32 GetRecruiterId() const { return recruiterId; }
         bool IsARecruiter() const { return isRecruiter; }
+
+        // Battle Pets
+        BattlePetMgr* GetBattlePetMgr() const { return _battlePetMgr.get(); }
+
+        CollectionMgr* GetCollectionMgr() const { return _collectionMgr.get(); }
 
     public:                                                 // opcodes handlers
 
@@ -1306,6 +1317,7 @@ class WorldSession
         void HandleSwapItem(WorldPackets::Item::SwapItem& swapItem);
         void HandleBuybackItem(WorldPackets::Item::BuyBackItem& packet);
         void HandleWrapItem(WorldPackets::Item::WrapItem& packet);
+        void HandleUseCritterItem(WorldPackets::Item::UseCritterItem& packet);
 
         void HandleAttackSwingOpcode(WorldPackets::Combat::AttackSwing& packet);
         void HandleAttackStopOpcode(WorldPackets::Combat::AttackStop& packet);
@@ -1581,6 +1593,15 @@ class WorldSession
         void HandleGarrisonRequestBlueprintAndSpecializationData(WorldPackets::Garrison::GarrisonRequestBlueprintAndSpecializationData& garrisonRequestBlueprintAndSpecializationData);
         void HandleGarrisonGetBuildingLandmarks(WorldPackets::Garrison::GarrisonGetBuildingLandmarks& garrisonGetBuildingLandmarks);
 
+        // Battle Pets
+        void HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& battlePetRequestJournal);
+        void HandleBattlePetSetBattleSlot(WorldPackets::BattlePet::BattlePetSetBattleSlot& battlePetSetBattleSlot);
+        void HandleBattlePetModifyName(WorldPackets::BattlePet::BattlePetModifyName& battlePetModifyName);
+        void HandleBattlePetDeletePet(WorldPackets::BattlePet::BattlePetDeletePet& battlePetDeletePet);
+        void HandleBattlePetSetFlags(WorldPackets::BattlePet::BattlePetSetFlags& battlePetSetFlags);
+        void HandleBattlePetSummon(WorldPackets::BattlePet::BattlePetSummon& battlePetSummon);
+        void HandleCageBattlePet(WorldPackets::BattlePet::CageBattlePet& cageBattlePet);
+
     private:
         void InitializeQueryCallbackParameters();
         void ProcessQueryCallbacks();
@@ -1692,7 +1713,10 @@ class WorldSession
         uint32 expireTime;
         bool forceExit;
         ObjectGuid m_currentBankerGUID;
-        ToyBoxContainer _toys;
+
+        std::unique_ptr<CollectionMgr> _collectionMgr;
+
+        std::unique_ptr<BattlePetMgr> _battlePetMgr;
 
         WorldSession(WorldSession const& right) = delete;
         WorldSession& operator=(WorldSession const& right) = delete;

@@ -48,7 +48,9 @@
 #include "ClientConfigPackets.h"
 #include "MiscPackets.h"
 #include "ChatPackets.h"
+#include "BattlePetMgr.h"
 #include "PacketUtilities.h"
+#include "CollectionMgr.h"
 
 #include <zlib.h>
 
@@ -130,7 +132,9 @@ WorldSession::WorldSession(uint32 id, std::string&& name, uint32 battlenetAccoun
     _RBACData(NULL),
     expireTime(60000), // 1 min after socket loss, session is deleted
     forceExit(false),
-    m_currentBankerGUID()
+    m_currentBankerGUID(),
+    _battlePetMgr(Trinity::make_unique<BattlePetMgr>(this)),
+    _collectionMgr(Trinity::make_unique<CollectionMgr>(this))
 {
     memset(_tutorials, 0, sizeof(_tutorials));
 
@@ -748,40 +752,6 @@ void WorldSession::LoadAccountData(PreparedQueryResult result, uint32 mask)
     while (result->NextRow());
 }
 
-void WorldSession::LoadAccountToys(PreparedQueryResult result)
-{
-    if (!result)
-        return;
-
-    do
-    {
-        Field* fields = result->Fetch();
-        uint32 itemId = fields[0].GetUInt32();
-        bool isFavourite = fields[1].GetBool();
-
-        _toys[itemId] = isFavourite;
-    }
-    while (result->NextRow());
-}
-
-void WorldSession::SaveAccountToys(SQLTransaction& trans)
-{
-    PreparedStatement* stmt = NULL;
-    for (ToyBoxContainer::const_iterator itr = _toys.begin(); itr != _toys.end(); ++itr)
-    {
-        stmt = LoginDatabase.GetPreparedStatement(LOGIN_REP_ACCOUNT_TOYS);
-        stmt->setUInt32(0, GetBattlenetAccountId());
-        stmt->setUInt32(1, itr->first);
-        stmt->setBool(2, itr->second);
-        trans->Append(stmt);
-    }
-}
-
-bool WorldSession::UpdateAccountToys(uint32 itemId, bool isFavourite /*= false*/)
-{
-    return _toys.insert(ToyBoxContainer::value_type(itemId, isFavourite)).second;
-}
-
 void WorldSession::SetAccountData(AccountDataType type, uint32 time, std::string const& data)
 {
     if ((1 << type) & GLOBAL_CACHE_MASK)
@@ -1191,6 +1161,8 @@ public:
     enum
     {
         GLOBAL_ACCOUNT_TOYS = 0,
+        BATTLE_PETS,
+        BATTLE_PET_SLOTS,
 
         MAX_QUERIES
     };
@@ -1204,6 +1176,14 @@ public:
         PreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_ACCOUNT_TOYS);
         stmt->setUInt32(0, battlenetAccountId);
         ok = SetPreparedQuery(GLOBAL_ACCOUNT_TOYS, stmt) && ok;
+
+        stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_BATTLE_PETS);
+        stmt->setUInt32(0, battlenetAccountId);
+        ok = SetPreparedQuery(BATTLE_PETS, stmt) && ok;
+
+        stmt = LoginDatabase.GetPreparedStatement(LOGIN_SEL_BATTLE_PET_SLOTS);
+        stmt->setUInt32(0, battlenetAccountId);
+        ok = SetPreparedQuery(BATTLE_PET_SLOTS, stmt) && ok;
 
         return ok;
     }
@@ -1236,7 +1216,7 @@ void WorldSession::InitializeSessionCallback(SQLQueryHolder* realmHolder, SQLQue
 {
     LoadAccountData(realmHolder->GetPreparedResult(AccountInfoQueryHolderPerRealm::GLOBAL_ACCOUNT_DATA), GLOBAL_CACHE_MASK);
     LoadTutorialsData(realmHolder->GetPreparedResult(AccountInfoQueryHolderPerRealm::TUTORIALS));
-    LoadAccountToys(holder->GetPreparedResult(AccountInfoQueryHolder::GLOBAL_ACCOUNT_TOYS));
+    _collectionMgr->LoadAccountToys(holder->GetPreparedResult(AccountInfoQueryHolder::GLOBAL_ACCOUNT_TOYS));
 
     if (!m_inQueue)
         SendAuthResponse(AUTH_OK, false);
@@ -1251,6 +1231,9 @@ void WorldSession::InitializeSessionCallback(SQLQueryHolder* realmHolder, SQLQue
     SendAddonsInfo();
     SendClientCacheVersion(sWorld->getIntConfig(CONFIG_CLIENTCACHE_VERSION));
     SendTutorialsData();
+
+    _battlePetMgr->LoadFromDB(holder->GetPreparedResult(AccountInfoQueryHolder::BATTLE_PETS),
+                              holder->GetPreparedResult(AccountInfoQueryHolder::BATTLE_PET_SLOTS));
 
     delete realmHolder;
     delete holder;

@@ -20,7 +20,6 @@
 
 #include "Common.h"
 #include "DBCEnums.h"
-#include "Path.h"
 #include "Util.h"
 
 #pragma pack(push, 1)
@@ -75,6 +74,42 @@ struct BarberShopStyleEntry
     uint32 Race;                                                    // 5
     uint32 Sex;                                                     // 6
     uint32 Data;                                                    // 7 (real ID to hair/facial hair)
+};
+
+struct BattlePetBreedQualityEntry
+{
+    uint32 ID;                                                      // 0
+    uint32 Quality;                                                 // 1
+    float Modifier;                                                 // 2
+};
+
+struct BattlePetBreedStateEntry
+{
+    uint32 ID;                                                      // 0
+    uint32 BreedID;                                                 // 1
+    uint32 State;                                                   // 2
+    int32 Value;                                                    // 3
+};
+
+struct BattlePetSpeciesEntry
+{
+    uint32 ID;                                                      // 0
+    uint32 CreatureID;                                              // 1
+    uint32 IconFileID;                                              // 2
+    uint32 SummonSpellID;                                           // 3
+    uint32 PetType;                                                 // 4
+    int32  Source;                                                  // 5
+    uint32 Flags;                                                   // 6
+    LocalizedString* SourceText;                                    // 7
+    LocalizedString* Description;                                   // 8
+};
+
+struct BattlePetSpeciesStateEntry
+{
+    uint32 ID;                                                      // 0
+    uint32 SpeciesID;                                               // 1
+    uint32 State;                                                   // 2
+    int32 Value;                                                    // 3
 };
 
 #define MAX_BROADCAST_TEXT_EMOTES 3
@@ -830,6 +865,12 @@ struct ItemSpecOverrideEntry
     uint32 SpecID;                                                  // 2
 };
 
+struct ItemToBattlePetSpeciesEntry
+{
+    uint32      ID;                                                 // 0
+    uint32      BattlePetSpeciesID;                                 // 1
+};
+
 struct ItemXBonusTreeEntry
 {
     uint32 ID;                                                      // 0
@@ -1316,15 +1357,7 @@ struct TaxiPathBySourceAndDestination
 typedef std::map<uint32, TaxiPathBySourceAndDestination> TaxiPathSetForSource;
 typedef std::map<uint32, TaxiPathSetForSource> TaxiPathSetBySource;
 
-struct TaxiPathNodePtr
-{
-    TaxiPathNodePtr() : i_ptr(NULL) { }
-    TaxiPathNodePtr(TaxiPathNodeEntry const* ptr) : i_ptr(ptr) { }
-    TaxiPathNodeEntry const* i_ptr;
-    operator TaxiPathNodeEntry const& () const { return *i_ptr; }
-};
-
-typedef Path<TaxiPathNodePtr, TaxiPathNodeEntry const> TaxiPathNodeList;
+typedef std::vector<TaxiPathNodeEntry const*> TaxiPathNodeList;
 typedef std::vector<TaxiPathNodeList> TaxiPathNodesByPath;
 
 #define TaxiMaskSize 217

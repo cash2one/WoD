@@ -27,6 +27,7 @@
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "BattlegroundScore.h"
+#include "BattlePetMgr.h"
 #include "CellImpl.h"
 #include "ChannelMgr.h"
 #include "CharacterDatabaseCleaner.h"
@@ -8851,8 +8852,6 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
         packet.Owner = loot->GetGUID();
         packet.LootMethod = _lootMethod;
         packet.AcquireReason = loot_type;
-        if (GetGroup() && (_lootMethod == GROUP_LOOT || _lootMethod == PERSONAL_LOOT)) /// @TODO: Need more research
-            packet.PersonalLooting = true;
         packet.Acquired = true; // false == No Loot (this too^^)
         loot->BuildLootResponse(packet, this, permission);
         SendDirectMessage(packet.Write());
@@ -13755,10 +13754,10 @@ void Player::SendNewItem(Item* item, uint32 quantity, bool pushed, bool created,
     packet.Quantity = quantity;
     packet.QuantityInInventory = GetItemCount(item->GetEntry());
     //packet.DungeonEncounterID;
-    //packet.BattlePetBreedID;
-    //packet.BattlePetBreedQuality;
-    //packet.BattlePetSpeciesID;
-    //packet.BattlePetLevel;
+    packet.BattlePetBreedID = item->GetModifier(ITEM_MODIFIER_BATTLE_PET_BREED_DATA) & 0xFFFFFF;
+    packet.BattlePetBreedQuality = (item->GetModifier(ITEM_MODIFIER_BATTLE_PET_BREED_DATA) >> 24) & 0xFF;
+    packet.BattlePetSpeciesID = item->GetModifier(ITEM_MODIFIER_BATTLE_PET_SPECIES_ID);
+    packet.BattlePetLevel = item->GetModifier(ITEM_MODIFIER_BATTLE_PET_LEVEL);
 
     packet.ItemGUID = item->GetGUID();
 
@@ -17288,7 +17287,7 @@ bool Player::LoadFromDB(ObjectGuid guid, SQLQueryHolder *holder)
 
     _LoadTalents(holder->GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_TALENTS));
     _LoadSpells(holder->GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_SPELLS));
-    _LoadToys(GetSession()->GetAccountToys());
+    GetSession()->GetCollectionMgr()->LoadToys();
 
     LearnSpecializationSpells();
 
@@ -17706,8 +17705,10 @@ void Player::LoadCorpse()
 
 void Player::_LoadInventory(PreparedQueryResult result, uint32 timeDiff)
 {
-    //              0             1               2                   3         4            5           6         7                8                    9             10             11       12                     13            14                  15               16   17    18
-    // SELECT ii.guid, ii.itemEntry, ii.creatorGuid, ii.giftCreatorGuid, ii.count, ii.duration, ii.charges, ii.flags, ii.enchantments, ii.randomPropertyId, ii.durability, ii.playedTime, ii.text, ii.transmogrification, ii.upgradeId, ii.enchantIllusion, ii.bonusListIDs, bag, slot FROM character_inventory ci JOIN item_instance ii ON ci.item = ii.guid WHERE ci.guid = ? ORDER BY bag, slot
+    //              0             1               2                   3         4            5           6         7                8                    9             10             11       12                     13            14
+    // SELECT ii.guid, ii.itemEntry, ii.creatorGuid, ii.giftCreatorGuid, ii.count, ii.duration, ii.charges, ii.flags, ii.enchantments, ii.randomPropertyId, ii.durability, ii.playedTime, ii.text, ii.transmogrification, ii.upgradeId
+    //                        15                  16                  17              18                  19               20   21    22
+    //        ii.enchantIllusion, battlePetSpeciesId, battlePetBreedData, battlePetLevel, battlePetDisplayId, ii.bonusListIDs, bag, slot FROM character_inventory ci JOIN item_instance ii ON ci.item = ii.guid WHERE ci.guid = ? ORDER BY bag, slot
     //NOTE: the "order by `bag`" is important because it makes sure
     //the bagMap is filled before items in the bags are loaded
     //NOTE2: the "order by `slot`" is needed because mainhand weapons are (wrongly?)
@@ -17729,8 +17730,8 @@ void Player::_LoadInventory(PreparedQueryResult result, uint32 timeDiff)
             Field* fields = result->Fetch();
             if (Item* item = _LoadItem(trans, zoneId, timeDiff, fields))
             {
-                ObjectGuid bagGuid = fields[17].GetUInt64() ? ObjectGuid::Create<HighGuid::Item>(fields[17].GetUInt64()) : ObjectGuid::Empty;
-                uint8 slot = fields[18].GetUInt8();
+                ObjectGuid bagGuid = fields[21].GetUInt64() ? ObjectGuid::Create<HighGuid::Item>(fields[21].GetUInt64()) : ObjectGuid::Empty;
+                uint8 slot = fields[22].GetUInt8();
 
                 uint8 err = EQUIP_ERR_OK;
                 // Item is not in bag
@@ -18051,7 +18052,7 @@ void Player::_LoadMailedItems(Mail* mail)
 
         Item* item = NewItemOrBag(proto);
 
-        ObjectGuid ownerGuid = fields[17].GetUInt64() ? ObjectGuid::Create<HighGuid::Player>(fields[17].GetUInt64()) : ObjectGuid::Empty;
+        ObjectGuid ownerGuid = fields[21].GetUInt64() ? ObjectGuid::Create<HighGuid::Player>(fields[21].GetUInt64()) : ObjectGuid::Empty;
         if (!item->LoadFromDB(itemGuid, ownerGuid, fields, itemEntry))
         {
             TC_LOG_ERROR("entities.player", "Player::_LoadMailedItems - Item in mail (%u) doesn't exist !!!! - item guid: " UI64FMTD ", deleted from mail", mail->messageID, itemGuid);
@@ -18425,23 +18426,6 @@ void Player::_LoadSpells(PreparedQueryResult result)
             AddSpell((*result)[0].GetUInt32(), (*result)[1].GetBool(), false, false, (*result)[2].GetBool(), true);
         while (result->NextRow());
     }
-}
-
-void Player::_LoadToys(ToyBoxContainer const& toys)
-{
-    for (auto const& t : toys)
-        AddDynamicValue(PLAYER_DYNAMIC_FIELD_TOYS, t.first);
-}
-
-bool Player::AddToy(uint32 itemId, bool isFavourite /*= false*/)
-{
-    if (GetSession()->UpdateAccountToys(itemId, isFavourite))
-    {
-        AddDynamicValue(PLAYER_DYNAMIC_FIELD_TOYS, itemId);
-        return true;
-    }
-
-    return false;
 }
 
 void Player::_LoadGroup(PreparedQueryResult result)
@@ -19244,9 +19228,11 @@ void Player::SaveToDB(bool create /*=false*/)
 
     CharacterDatabase.CommitTransaction(trans);
 
-    SQLTransaction transLogin = LoginDatabase.BeginTransaction();
-    GetSession()->SaveAccountToys(transLogin);
-    LoginDatabase.CommitTransaction(transLogin);
+    // TODO: Move this out
+    trans = LoginDatabase.BeginTransaction();
+    GetSession()->GetCollectionMgr()->SaveAccountToys(trans);
+    GetSession()->GetBattlePetMgr()->SaveToDB(trans);
+    LoginDatabase.CommitTransaction(trans);
 
     // save pet (hunter pet level and experience and all type pets health/mana).
     if (Pet* pet = GetPet())
@@ -21089,6 +21075,7 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     // fill destinations path tail
     uint32 sourcepath = 0;
     uint32 totalcost = 0;
+    uint32 firstcost = 0;
 
     uint32 prevnode = sourcenode;
     uint32 lastnode = 0;
@@ -21107,6 +21094,8 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
         }
 
         totalcost += cost;
+        if (i == 1)
+            firstcost = cost;
 
         if (prevnode == sourcenode)
             sourcepath = path;
@@ -21145,8 +21134,6 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     }
 
     //Checks and preparations done, DO FLIGHT
-    ModifyMoney(-int64(totalcost));
-    UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_GOLD_SPENT_FOR_TRAVELLING, totalcost);
     UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_FLIGHT_PATHS_TAKEN, 1);
 
     // prevent stealth flight
@@ -21157,11 +21144,15 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
         TaxiNodesEntry const* lastPathNode = sTaxiNodesStore.LookupEntry(nodes[nodes.size()-1]);
         ASSERT(lastPathNode);
         m_taxi.ClearTaxiDestinations();
+        ModifyMoney(-int64(totalcost));
+        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_GOLD_SPENT_FOR_TRAVELLING, totalcost);
         TeleportTo(lastPathNode->MapID, lastPathNode->Pos.X, lastPathNode->Pos.Y, lastPathNode->Pos.Z, GetOrientation());
         return false;
     }
     else
     {
+        ModifyMoney(-int64(firstcost));
+        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_GOLD_SPENT_FOR_TRAVELLING, firstcost);
         GetSession()->SendActivateTaxiReply(ERR_TAXIOK);
         GetSession()->SendDoFlight(mount_display_id, sourcepath);
     }
@@ -21212,30 +21203,30 @@ void Player::ContinueTaxiFlight()
 
     float distPrev = MAP_SIZE*MAP_SIZE;
     float distNext =
-        (nodeList[0].Loc.X-GetPositionX())*(nodeList[0].Loc.X-GetPositionX())+
-        (nodeList[0].Loc.Y-GetPositionY())*(nodeList[0].Loc.Y-GetPositionY())+
-        (nodeList[0].Loc.Z-GetPositionZ())*(nodeList[0].Loc.Z-GetPositionZ());
+        (nodeList[0]->Loc.X - GetPositionX())*(nodeList[0]->Loc.X - GetPositionX()) +
+        (nodeList[0]->Loc.Y - GetPositionY())*(nodeList[0]->Loc.Y - GetPositionY()) +
+        (nodeList[0]->Loc.Z - GetPositionZ())*(nodeList[0]->Loc.Z - GetPositionZ());
 
     for (uint32 i = 1; i < nodeList.size(); ++i)
     {
-        TaxiPathNodeEntry const& node = nodeList[i];
-        TaxiPathNodeEntry const& prevNode = nodeList[i-1];
+        TaxiPathNodeEntry const* node = nodeList[i];
+        TaxiPathNodeEntry const* prevNode = nodeList[i-1];
 
         // skip nodes at another map
-        if (node.MapID != GetMapId())
+        if (node->MapID != GetMapId())
             continue;
 
         distPrev = distNext;
 
         distNext =
-            (node.Loc.X-GetPositionX())*(node.Loc.X-GetPositionX())+
-            (node.Loc.Y-GetPositionY())*(node.Loc.Y-GetPositionY())+
-            (node.Loc.Z-GetPositionZ())*(node.Loc.Z-GetPositionZ());
+            (node->Loc.X - GetPositionX()) * (node->Loc.X - GetPositionX()) +
+            (node->Loc.Y - GetPositionY()) * (node->Loc.Y - GetPositionY()) +
+            (node->Loc.Z - GetPositionZ()) * (node->Loc.Z - GetPositionZ());
 
         float distNodes =
-            (node.Loc.X-prevNode.Loc.X)*(node.Loc.X-prevNode.Loc.X)+
-            (node.Loc.Y-prevNode.Loc.Y)*(node.Loc.Y-prevNode.Loc.Y)+
-            (node.Loc.Z-prevNode.Loc.Z)*(node.Loc.Z-prevNode.Loc.Z);
+            (node->Loc.X - prevNode->Loc.X) * (node->Loc.X - prevNode->Loc.X) +
+            (node->Loc.Y - prevNode->Loc.Y) * (node->Loc.Y - prevNode->Loc.Y) +
+            (node->Loc.Z - prevNode->Loc.Z) * (node->Loc.Z - prevNode->Loc.Z);
 
         if (distNext + distPrev < distNodes)
         {
@@ -22691,7 +22682,7 @@ void Player::SendInitialPacketsBeforeAddToMap()
     // SMSG_ACCOUNT_TOYS_UPDATE
     WorldPackets::Toy::AccountToysUpdate toysUpdate;
     toysUpdate.IsFullUpdate = true;
-    toysUpdate.Toys = &GetSession()->GetAccountToys();
+    toysUpdate.Toys = &GetSession()->GetCollectionMgr()->GetAccountToys();
     SendDirectMessage(toysUpdate.Write());
 
     WorldPackets::Character::InitialSetup initialSetup;
@@ -22830,7 +22821,7 @@ void Player::ApplyEquipCooldown(Item* pItem)
             continue;
 
         // Don't replace longer cooldowns by equip cooldown if we have any.
-        if (GetSpellHistory()->GetRemainingCooldown(effectData->SpellID) > 30 * IN_MILLISECONDS)
+        if (GetSpellHistory()->GetRemainingCooldown(sSpellMgr->AssertSpellInfo(effectData->SpellID)) > 30 * IN_MILLISECONDS)
             continue;
 
         GetSpellHistory()->AddCooldown(effectData->SpellID, pItem->GetEntry(), std::chrono::seconds(30));

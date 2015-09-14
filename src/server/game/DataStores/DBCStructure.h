@@ -21,12 +21,7 @@
 
 #include "Common.h"
 #include "DBCEnums.h"
-#include "Path.h"
 #include "Util.h"
-
-#include <map>
-#include <set>
-#include <vector>
 
 // Structures using to access raw DBC data and required packing to portability
 #pragma pack(push, 1)
@@ -1092,9 +1087,6 @@ struct SpellCategoriesEntry
     uint32      StartRecoveryCategory;                      // 8
     uint32      ChargeCategory;                             // 9
 };
-
-typedef std::set<uint32> SpellCategorySet;
-typedef std::map<uint32, SpellCategorySet > SpellCategoryStore;
 
 struct SpellCategoryEntry
 {
